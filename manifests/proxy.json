@@ -1,0 +1,1 @@
+{"kind": "Pod", "spec": {"hostNetwork": true, "containers": [{"command": ["/hyperkube", "proxy", "--master=${MASTER_IP}:${MASTER_PORT}"], "image": "${HYPERKUBE_IMAGE}", "securityContext": {"privileged": true}, "name": "kube-proxy"}]}, "apiVersion": "v1", "metadata": {"namespace": "kube-system", "name": "kube-proxy"}}

@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata: 
+  name: kube-scheduler
+  namespace: kube-system
+spec: 
+  containers: 
+    - 
+      command: 
+        - /hyperkube
+        - scheduler
+        - --master=${MASTER_IP}:${MASTER_PORT} 
+      image: ${HYPERKUBE_IMAGE}
+      livenessProbe: 
+        httpGet: 
+          host: "127.0.0.1"
+          path: /healthz
+          port: 10251
+        initialDelaySeconds: 15
+        timeoutSeconds: 15
+      name: kube-scheduler
+      resources: 
+        limits: 
+          cpu: 200m
+  hostNetwork: true

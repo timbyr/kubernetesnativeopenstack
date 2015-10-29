@@ -1,0 +1,60 @@
+#cloud-config
+
+coreos:
+  units:
+    - name: docker.service
+      command: stop
+      drop-ins:
+        - name: 50-opts.conf
+          content: |
+            [Unit]
+            After=early-docker.target network.target
+            Requires=early-docker.target
+
+            [Service]
+            Environment='DOCKER_OPTS=-H unix:///var/run/docker.sock --bridge=cbr0 --iptables=false --insecure-registry="10.30.1.0/24"'
+    - name: docker.socket
+      content: |
+        [Unit]
+        Description=Docker Socket for the API
+
+        [Socket]
+        ListenStream=/var/run/dockerd.sock
+        SocketMode=0660
+        SocketUser=docker
+        SocketGroup=docker
+
+        [Install]
+        WantedBy=sockets.target
+    - name: kubelet.service
+      content: |
+        [Unit]
+        After=install-kube.service
+        Wants=install-kube.service
+
+        [Service]
+        Restart=on-failure
+        ExecStart=/opt/bin/kubelet \
+        --api-servers=${MASTER_IP}:${MASTER_PORT} \
+        --configure-cbr0=true \
+        --cluster_dns=${DNS_SERVICE_IP} \
+        --cluster_domain=cluster.local \
+        --config=/etc/kubernetes/manifests \
+        --hostname-override=$private_ipv4 --v=4
+  
+        [Install]
+        WantedBy=multi-user.target
+    - name: kube-proxy.service
+      content: |
+        [Unit]
+        After=install-kube.service
+        Wants=install-kube.service
+
+        [Service]
+        Restart=on-failure
+        ExecStart=/opt/bin/hyperkube proxy --master=${MASTER_IP}:${MASTER_PORT}
+  
+        [Install]
+        WantedBy=multi-user.target
+
+      command: start

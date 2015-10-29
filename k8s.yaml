@@ -1,0 +1,211 @@
+heat_template_version: 2015-04-30
+
+description: template to deploy kubernetes on openstack
+
+parameters:
+  discoveryurl:
+    type: string
+    description: ${DISCOVERYURL} is generated from https://discovery.etcd.io/new
+  key:
+    type: string
+  network_cidr:
+    type: string
+    default: 10.240.0.0/16
+  container_cidr:
+    type: string
+    default: 10.164.0.0/14
+  service_cluster_cidr:
+    type: string
+    default: 10.167.240.0/20
+  hyperkube_image:
+    type: string
+    default: timbyr/hyperkube:1.1.0-openstack
+  auth_url:
+    type: string
+    default: http://192.168.120.100:5000/v2.0/
+  public_net_id:
+    type: string
+    default: 35ed368e-f732-48fc-949a-35f9abe50870
+  dns_service_ip:
+    type: string
+    default: 10.167.255.254
+  kubelet_url:
+    type: string
+    default: http://192.168.121.1/kubelet
+  hyperkube_url:
+    type: string
+    default: http://192.168.121.1/hyperkube
+  master_port:
+    type: string
+    default: 8080
+
+
+resources:
+
+  ######################################################################
+  #
+  # security groups.  we need to permit network traffic of various
+  # sorts.
+  #
+  #
+  secgroup_base:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      rules:
+        - protocol: icmp
+        - protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+        - remote_mode: remote_group_id
+ 
+  secgroup_kubernetes:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      rules:
+        - protocol: tcp
+          port_range_min: 7080
+          port_range_max: 7080
+        - protocol: tcp
+          port_range_min: 8080
+          port_range_max: 8080
+        - protocol: tcp
+          port_range_min: 2379
+          port_range_max: 2379
+        - protocol: tcp
+          port_range_min: 2380
+          port_range_max: 2380
+
+################################################
+# Networking
+###############################################
+
+  fixed_network:
+    type: OS::Neutron::Net
+ 
+  fixed_subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      cidr: {get_param: network_cidr}
+      network: {get_resource: fixed_network}
+      dns_nameservers:
+        - 8.8.8.8
+ 
+  extrouter:
+    type: OS::Neutron::Router
+    properties:
+      external_gateway_info:
+        network: public
+
+  extrouter_inside:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router_id: {get_resource: extrouter}
+      subnet: {get_resource: fixed_subnet}
+
+  kube_master_eth0:
+    type: OS::Neutron::Port
+    properties:
+      security_groups:
+        - {get_resource: secgroup_base}
+        - {get_resource: secgroup_kubernetes}
+      network: {get_resource: fixed_network}
+      fixed_ips:
+        - subnet: {get_resource: fixed_subnet}
+
+  kube_master_floating:
+    type: OS::Neutron::FloatingIP
+    depends_on:
+      - extrouter_inside
+    properties:
+      floating_network: public
+      port_id: {get_resource: kube_master_eth0}
+
+            
+################################################
+# Software configs
+################################################
+  kube_master_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            ${coreos_params}
+            ${install_kubernetes}
+            ${install_kubernetes_master}
+          params:
+            ${coreos_params}: 
+              str_replace:
+                template: {get_file: configs/coreos.params.yaml}
+                params:
+                  ${DISCOVERYURL}: {get_param: discoveryurl}
+                  ${SSH_KEY}: {get_param: key}  
+
+            ${install_kubernetes}: 
+              str_replace:
+                template: {get_file: configs/install_kubernetes.yaml}
+                params:
+                  ${KUBELET_URL}: {get_param: kubelet_url}
+            ${install_kubernetes_master}:
+              str_replace:
+                template:
+                  str_replace:
+                    template: {get_file: configs/install_kubernetes_master.yaml}
+                    params:
+                      ${API}: {get_file: manifests/api.json}
+                      ${SCHEDULER}: {get_file: manifests/scheduler.json}
+                      ${CONTROLLER}: {get_file: manifests/controller.json}
+                      ${PROXY}: {get_file: manifests/proxy.json}
+                params:
+                  ${HYPERKUBE_IMAGE}: {get_param: hyperkube_image}
+                  ${MASTER_IP}: $private_ipv4
+                  ${MASTER_PORT}: {get_param: master_port}
+                  ${SERVICE_CLUSTER_IP_RANGE}: {get_param: service_cluster_cidr}
+                  ${CONTAINER_SUBNET}: {get_param: container_cidr}
+                  ${SUBNET_ID}: {get_resource: fixed_subnet}
+                  ${ROUTER_ID}: {get_resource: extrouter}
+                  ${PUBLIC_NET_ID}: {get_param: public_net_id}
+                  ${AUTH_URL}: {get_param: auth_url}
+                  ${DNS_SERVICE_IP}: {get_param: dns_service_ip}
+
+
+################################################
+# Master
+################################################
+
+  kube_master:
+    type: OS::Nova::Server
+    properties:
+      name: kubernetes-master
+      image: coreos
+      flavor: fyp.small
+      key_name: key
+      networks:
+        - port: {get_resource: kube_master_eth0}
+      user_data_format: RAW
+      user_data: {get_resource: kube_master_init}
+
+  minion_group:
+    type: OS::Heat::AutoScalingGroup
+    properties:
+      max_size: 10
+      min_size: 2
+      resource:
+        type: minion.yaml
+        properties:
+          discoveryurl: {get_param: discoveryurl}
+          key: {get_param: key}
+          subnet: {get_resource: fixed_subnet}
+          network: {get_resource: fixed_network}
+          master_ip: {get_attr: [kube_master_eth0, fixed_ips, 0, ip_address]}
+          secgroup_base: {get_resource: secgroup_base}
+          secgroup_kubernetes: {get_resource: secgroup_kubernetes}
+          dns_service_ip: {get_param: dns_service_ip}
+          kubelet_url: {get_param: kubelet_url}
+          hyperkube_url: {get_param: hyperkube_url}
+          master_port: {get_param: master_port}
+
+outputs:
+  master_ip:
+    description: master ip
+    value: {get_attr: [kube_master_eth0, fixed_ips, 0, ip_address]}

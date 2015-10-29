@@ -1,0 +1,58 @@
+write_files:
+  - path: /etc/kubernetes/manifests/api.manifest
+    content: '${API}'
+  - path: /etc/kubernetes/manifests/scheduler.manifest
+    content: '${SCHEDULER}'
+  - path: /etc/kubernetes/manifests/controller.manifest
+    content: '${CONTROLLER}'
+  - path: /etc/kubernetes/manifests/proxy.manifest
+    content: '${PROXY}'
+  - path: /etc/kubernetes/cloud-config/openstack.cfg
+    content: |
+      [Global]
+      auth-url = ${AUTH_URL}
+      username = keith
+      tenant-name = keith
+      password = keith
+      region = RegionOne
+      [LoadBalancer]
+      subnet-id = ${SUBNET_ID}
+      public-net-id = ${PUBLIC_NET_ID}
+      [Route]
+      router-id = ${ROUTER_ID}
+      hostname-override = true
+
+coreos:
+  units:
+    - name: etcd.service
+      command: start
+  units:
+    - name: kubelet.service
+      content: |
+        [Unit]
+        After=install-kube.service
+        Wants=install-kube.service
+
+        [Service]
+        Restart=on-failure
+        ExecStart=/opt/bin/kubelet \
+        --enable-server=false \
+        --config=/etc/kubernetes/manifests \
+        --cluster_dns=${DNS_SERVICE_IP} \
+        --cluster_domain=cluster.local \
+        --register-node false
+
+        [Install]
+        WantedBy=multi-user.target
+      command: start
+#    - name: cbr0.network
+#      command: start
+#      content: |
+#        [Match]
+#        Name=cbr0
+#
+#        [Network]
+#        Address=${CONTAINER_GATEWAY}
+#
+#        [Route]
+#        Destination=${CONTAINER_SUBNET}

@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Pod
+metadata: 
+  name: kube-apiserver
+  namespace: kube-system
+spec: 
+  containers: 
+    - 
+      command: 
+        - /hyperkube
+        - apiserver
+        - --address=0.0.0.0
+        - "--port=${MASTER_PORT}"
+        - "--etcd_servers=http://${MASTER_IP}:4001"
+        - "--service-cluster-ip-range=${SERVICE_CLUSTER_IP_RANGE}"
+        - --token-auth-file=/dev/null
+        - --insecure-bind-address=0.0.0.0
+        - --advertise-address=${MASTER_IP}
+        - --cloud-provider=openstack
+        - --cloud-config=/etc/kubernetes/cloud-config/openstack.cfg
+        - --v=4
+      image: "${HYPERKUBE_IMAGE}"
+      livenessProbe: 
+        httpGet: 
+          host: ${MASTER_IP}
+          path: /healthz
+          port: ${MASTER_PORT}
+        initialDelaySeconds: 15
+        timeoutSeconds: 15
+      volumeMounts:
+        - name: cloudconfig
+          mountPath: /etc/kubernetes/cloud-config
+          readOnly: true
+      name: kube-apiserver
+      ports: 
+        - 
+          containerPort: 443
+          hostPort: 443
+          name: https
+        - 
+          containerPort: ${MASTER_PORT}
+          hostPort: ${MASTER_PORT}
+          name: local
+  hostNetwork: true
+  volumes:
+    - name: cloudconfig
+      hostPath:
+        path: /etc/kubernetes/cloud-config
+

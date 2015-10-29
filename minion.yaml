@@ -1,0 +1,81 @@
+heat_template_version: 2015-04-30
+
+description: template to deploy kubernetes on openstack
+
+parameters:
+  discoveryurl:
+    type: string
+    description: ${DISCOVERYURL} is generated from https://discovery.etcd.io/new
+  key:
+    type: string
+  master_ip:
+    type: string
+  subnet:
+    type: string
+  network:
+    type: string
+  secgroup_kubernetes:
+    type: string
+  secgroup_base:
+    type: string
+  dns_service_ip:
+    type: string
+  kubelet_url:
+    type: string
+  hyperkube_url:
+    type: string
+  master_port:
+    type: string
+
+resources:
+  server:
+    type: OS::Nova::Server
+    properties:
+      flavor: fyp.small
+      image: coreos
+      key_name: key
+      networks:
+        - port: {get_resource: eth0}
+      user_data_format: RAW
+      user_data: {get_resource: kube_minion_init}
+
+  eth0:
+    type: OS::Neutron::Port
+    properties:
+      security_groups:
+        - {get_param: secgroup_base}
+        - {get_param: secgroup_kubernetes}
+      network: {get_param: network}
+      fixed_ips:
+        - subnet: {get_param: subnet}
+
+  kube_minion_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            ${coreos_params}
+            ${install_kubernetes}
+            ${install_kubernetes_minion}
+          params:
+            ${coreos_params}: 
+              str_replace:
+                template: {get_file: configs/coreos.params.yaml}
+                params:
+                  ${DISCOVERYURL}: {get_param: discoveryurl}
+                  ${SSH_KEY}: {get_param: key}  
+
+            ${install_kubernetes}: 
+              str_replace:
+                template: {get_file: configs/install_kubernetes.yaml}
+                params:
+                  ${KUBELET_URL}: {get_param: kubelet_url}
+                  ${HYPERKUBE_URL}: {get_param: hyperkube_url}
+            ${install_kubernetes_minion}:
+              str_replace:
+                template: {get_file: configs/install_kubernetes_minion.yaml}
+                params:
+                  ${MASTER_IP}: {get_param: master_ip}
+                  ${MASTER_PORT}: {get_param: master_port}
+                  ${DNS_SERVICE_IP}: {get_param: dns_service_ip}
